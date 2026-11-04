@@ -26,12 +26,11 @@ const (
 
 // Result is the outcome of a single echo request.
 type Result struct {
-	Host     string
-	Time     time.Time
-	Seq      int
-	SourceIP string
-	Latency  time.Duration
-	Err      error
+	Host    string
+	Time    time.Time
+	Seq     int
+	Latency time.Duration
+	Err     error
 }
 
 // pingError carries a probable cause alongside the exact error text.
@@ -70,7 +69,7 @@ var errTimeout = &pingError{
 
 // pinger sends one echo request and waits for the matching reply.
 type pinger interface {
-	Ping(ctx context.Context, seq int) (sourceIP string, latency time.Duration, err error)
+	Ping(ctx context.Context, seq int) (latency time.Duration, err error)
 	Close() error
 }
 
@@ -106,19 +105,19 @@ func newSocketPinger(addr *net.IPAddr) (*socketPinger, error) {
 	p := &socketPinger{v6: v6, proto: proto, id: rand.Intn(0xffff), buf: make([]byte, 1500)}
 	if c, err := icmp.ListenPacket(rawNet, ""); err == nil {
 		p.conn, p.dst, p.rawID = c, addr, true
-		return p, nil
+	} else {
+		c, err := icmp.ListenPacket(udpNet, "")
+		if err != nil {
+			return nil, err
+		}
+		p.conn, p.dst = c, &net.UDPAddr{IP: addr.IP, Zone: addr.Zone}
 	}
-	c, err := icmp.ListenPacket(udpNet, "")
-	if err != nil {
-		return nil, err
-	}
-	p.conn, p.dst = c, &net.UDPAddr{IP: addr.IP, Zone: addr.Zone}
 	return p, nil
 }
 
 func (p *socketPinger) Close() error { return p.conn.Close() }
 
-func (p *socketPinger) Ping(ctx context.Context, seq int) (string, time.Duration, error) {
+func (p *socketPinger) Ping(ctx context.Context, seq int) (time.Duration, error) {
 	var typ icmp.Type = ipv4.ICMPTypeEcho
 	if p.v6 {
 		typ = ipv6.ICMPTypeEchoRequest
@@ -127,7 +126,7 @@ func (p *socketPinger) Ping(ctx context.Context, seq int) (string, time.Duration
 	msg := icmp.Message{Type: typ, Code: 0, Body: &icmp.Echo{ID: p.id, Seq: seq & 0xffff, Data: payload}}
 	wb, err := msg.Marshal(nil)
 	if err != nil {
-		return "", 0, err
+		return 0, err
 	}
 
 	start := time.Now()
@@ -136,25 +135,25 @@ func (p *socketPinger) Ping(ctx context.Context, seq int) (string, time.Duration
 		deadline = d
 	}
 	if err := p.conn.SetDeadline(deadline); err != nil {
-		return "", 0, err
+		return 0, err
 	}
 	if _, err := p.conn.WriteTo(wb, p.dst); err != nil {
-		return "", 0, err
+		return 0, err
 	}
 
 	for {
 		n, peer, err := p.conn.ReadFrom(p.buf)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return "", 0, errTimeout
+				return 0, errTimeout
 			}
-			return "", 0, err
+			return 0, err
 		}
 		rm, err := icmp.ParseMessage(p.proto, stripIPv4Header(p.buf[:n]))
 		if err != nil {
 			continue
 		}
-		src := peerIP(peer)
+		from := peerIP(peer)
 		switch body := rm.Body.(type) {
 		case *icmp.Echo:
 			if rm.Type != ipv4.ICMPTypeEchoReply && rm.Type != ipv6.ICMPTypeEchoReply {
@@ -166,18 +165,18 @@ func (p *socketPinger) Ping(ctx context.Context, seq int) (string, time.Duration
 			if body.Seq != seq&0xffff || !strings.HasPrefix(string(body.Data), string(payload)) {
 				continue
 			}
-			return src, time.Since(start), nil
+			return time.Since(start), nil
 		case *icmp.DstUnreach:
 			if !p.ownsInner(body.Data, seq) {
 				continue
 			}
-			return src, 0, unreachError(rm.Type, rm.Code, src)
+			return 0, unreachError(rm.Type, rm.Code, from)
 		case *icmp.TimeExceeded:
 			if !p.ownsInner(body.Data, seq) {
 				continue
 			}
-			return src, 0, &pingError{
-				msg:   fmt.Sprintf("time exceeded reported by %s", src),
+			return 0, &pingError{
+				msg:   fmt.Sprintf("time exceeded reported by %s", from),
 				cause: "TTL expired in transit: routing loop or path too long",
 			}
 		}
@@ -269,7 +268,7 @@ type execPinger struct {
 	host string
 }
 
-var pingLineRe = regexp.MustCompile(`from ([^:\s]+).*?time[=<]([\d.]+) ?ms`)
+var pingLineRe = regexp.MustCompile(`from [^:\s]+.*?time[=<]([\d.]+) ?ms`)
 
 func newExecPinger(host string) (*execPinger, error) {
 	bin := "/sbin/ping"
@@ -285,7 +284,7 @@ func newExecPinger(host string) (*execPinger, error) {
 
 func (p *execPinger) Close() error { return nil }
 
-func (p *execPinger) Ping(ctx context.Context, seq int) (string, time.Duration, error) {
+func (p *execPinger) Ping(ctx context.Context, seq int) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
 	defer cancel()
 	secs := strconv.Itoa(int(pingTimeout.Seconds()))
@@ -298,12 +297,12 @@ func (p *execPinger) Ping(ctx context.Context, seq int) (string, time.Duration, 
 	}
 	out, err := exec.CommandContext(ctx, p.bin, args...).CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", 0, errTimeout
+		return 0, errTimeout
 	}
 	if m := pingLineRe.FindSubmatch(out); m != nil {
-		ms, perr := strconv.ParseFloat(string(m[2]), 64)
+		ms, perr := strconv.ParseFloat(string(m[1]), 64)
 		if perr == nil {
-			return string(m[1]), time.Duration(ms * float64(time.Millisecond)), nil
+			return time.Duration(ms * float64(time.Millisecond)), nil
 		}
 	}
 	if err != nil {
@@ -312,11 +311,11 @@ func (p *execPinger) Ping(ctx context.Context, seq int) (string, time.Duration, 
 			msg = err.Error()
 		}
 		if strings.Contains(strings.ToLower(msg), "100.0% packet loss") || strings.Contains(strings.ToLower(msg), "timeout") {
-			return "", 0, errTimeout
+			return 0, errTimeout
 		}
-		return "", 0, errors.New(msg)
+		return 0, errors.New(msg)
 	}
-	return "", 0, errors.New("unparseable ping output: " + strings.TrimSpace(lastLine(out)))
+	return 0, errors.New("unparseable ping output: " + strings.TrimSpace(lastLine(out)))
 }
 
 func lastLine(b []byte) string {
@@ -336,9 +335,9 @@ func monitor(ctx context.Context, host string, p pinger, out chan<- Result) {
 	seq := 0
 	for {
 		now := time.Now()
-		src, lat, err := p.Ping(ctx, seq)
+		lat, err := p.Ping(ctx, seq)
 		select {
-		case out <- Result{Host: host, Time: now, Seq: seq, SourceIP: src, Latency: lat, Err: err}:
+		case out <- Result{Host: host, Time: now, Seq: seq, Latency: lat, Err: err}:
 		case <-ctx.Done():
 			return
 		}

@@ -12,7 +12,6 @@ import (
 type logEntry struct {
 	Time      string `json:"time"`
 	Target    string `json:"target"`
-	SourceIP  string `json:"source_ip,omitempty"`
 	ICMPSeq   int    `json:"icmp_seq"`
 	LatencyMs *int64 `json:"latency_ms,omitempty"`
 	Error     string `json:"error,omitempty"`
@@ -35,10 +34,9 @@ func openCTLog(host string) (*ctLogger, error) {
 
 func (l *ctLogger) Log(r Result) error {
 	e := logEntry{
-		Time:     r.Time.Format(time.RFC3339),
-		Target:   r.Host,
-		SourceIP: r.SourceIP,
-		ICMPSeq:  r.Seq,
+		Time:    r.Time.Format(time.RFC3339),
+		Target:  r.Host,
+		ICMPSeq: r.Seq,
 	}
 	if r.Err != nil {
 		e.Error = r.Err.Error()

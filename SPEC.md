@@ -34,8 +34,8 @@ printed.
 
 Additionally, I would like that the monitoring results are logged in an OpenTelemetry compatible
 format per monitored server. Every log entry must be a one-liner. It must always include the time 
-of the ping request in ISO 8601. If the response is successful, the one-liner should have the IP from which the 
-ICMP request appears to have happened, the icmp sequence number, and the time latency in ms.
+of the ping request in ISO 8601. If the response is successful, the one-liner should have the icmp sequence
+number and the time latency in ms.
 If the request failed, the log entry should provide the exact error and probable cause of the failure.
 If log files for a host exist already, they should be appended to, instead of overwritten.
 
@@ -44,27 +44,28 @@ If log files for a host exist already, they should be appended to, instead of ov
 running `conntest 8.8.8.8 192.168.1.1 127.0.0.1` should produce a following display after 10 pings:
 
 ```
-| 8.8.8.8          | 192.168.1.1      | 127.0.0.1        |
-|------------------|------------------|------------------|
-| ▄▆▁!▃▃▃▃█▄       | ▃▃▃▃▃▃▃▃▃▃       | ▁▁▁▁▁▁▁▁▁▁       |
+ 8.8.8.8          | 192.168.1.1      | 127.0.0.1        
+ ▄▆▁!▃▃▃▃█▄       | ▃▃▃▃▃▃▃▃▃▃       | ▁▁▁▁▁▁▁▁▁▁       
 ```
 
-The line wraps to a new line when the bars of one of the monitored hosts reaches the column width
+The line wraps to a new line when the bars of one of the monitored hosts reaches the column width. The columns
+are as wide as the full screen width allows, divided by the amount of servers that are monitored.
+Use nice ASCII Art thin lines, ommitting the lines left and right.
 
 and there should be three files: 8.8.8.8.ctlog, 192.168.1.1.ctlog, and 127.0.0.1.ctlog
 
 In the file 8.8.8.8.ctlog, there should be a following content
 ```
-{"time":"2026-11-04T15:44:00+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":0, "latency_ms":35}
-{"time":"2026-11-04T15:44:05+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":1, "latency_ms":53}
-{"time":"2026-11-04T15:44:10+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":2, "latency_ms":10}
-{"time":"2026-11-04T15:44:15+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":3, "error":"timeout after 4 seconds"}
-{"time":"2026-11-04T15:44:20+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":4, "latency_ms":22}
-{"time":"2026-11-04T15:44:25+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":5, "latency_ms":23}
-{"time":"2026-11-04T15:44:30+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":6, "latency_ms":29}
-{"time":"2026-11-04T15:44:35+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":7, "latency_ms":30}
-{"time":"2026-11-04T15:44:40+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":8, "latency_ms":71}
-{"time":"2026-11-04T15:44:45+01:00", "target":"8.8.8.8", "source_ip":"142.250.254.101", "icmp_seq":9, "latency_ms":35}
+{"time":"2026-11-04T15:44:00+01:00", "target":"8.8.8.8", "icmp_seq":0, "latency_ms":35}
+{"time":"2026-11-04T15:44:05+01:00", "target":"8.8.8.8", "icmp_seq":1, "latency_ms":53}
+{"time":"2026-11-04T15:44:10+01:00", "target":"8.8.8.8", "icmp_seq":2, "latency_ms":10}
+{"time":"2026-11-04T15:44:15+01:00", "target":"8.8.8.8", "icmp_seq":3, "error":"timeout after 4 seconds"}
+{"time":"2026-11-04T15:44:20+01:00", "target":"8.8.8.8", "icmp_seq":4, "latency_ms":22}
+{"time":"2026-11-04T15:44:25+01:00", "target":"8.8.8.8", "icmp_seq":5, "latency_ms":23}
+{"time":"2026-11-04T15:44:30+01:00", "target":"8.8.8.8", "icmp_seq":6, "latency_ms":29}
+{"time":"2026-11-04T15:44:35+01:00", "target":"8.8.8.8", "icmp_seq":7, "latency_ms":30}
+{"time":"2026-11-04T15:44:40+01:00", "target":"8.8.8.8", "icmp_seq":8, "latency_ms":71}
+{"time":"2026-11-04T15:44:45+01:00", "target":"8.8.8.8", "icmp_seq":9, "latency_ms":35}
 ```
 
 In the other files there should be 10 logs accordingly too.

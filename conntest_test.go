@@ -36,19 +36,28 @@ func TestCellBuckets(t *testing.T) {
 
 func TestDisplayWraps(t *testing.T) {
 	d := newDisplay(&strings.Builder{}, []string{"a", "b"})
+	d.termWidth = func() int { return 23 } // (23 - 3) / 2 = 10 per column
+	colWidth := d.colWidth()
+	if colWidth != 10 {
+		t.Fatalf("colWidth = %d", colWidth)
+	}
 	for i := 0; i < colWidth+1; i++ {
 		d.cells["a"] = append(d.cells["a"], "x")
 	}
 	d.cells["b"] = []string{"y"}
 	lines := d.lines()
-	if len(lines) != 4 {
-		t.Fatalf("want header+sep+2 rows, got %d lines:\n%s", len(lines), strings.Join(lines, "\n"))
+	want := []string{
+		"a          │ b",
+		strings.Repeat("x", 10) + " │ y",
+		"x          │",
 	}
-	if !strings.HasPrefix(lines[2], "| "+strings.Repeat("x", colWidth)+" | y") {
-		t.Errorf("row 0 = %q", lines[2])
+	if len(lines) != len(want) {
+		t.Fatalf("want %d lines, got %d:\n%s", len(want), len(lines), strings.Join(lines, "\n"))
 	}
-	if !strings.HasPrefix(lines[3], "| x"+strings.Repeat(" ", colWidth-1)+" | "+strings.Repeat(" ", colWidth)+" |") {
-		t.Errorf("row 1 = %q", lines[3])
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
 	}
 }
 
@@ -64,9 +73,9 @@ func TestCTLogAppendsJSONLines(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := Result{Host: "h", Time: ts, Seq: i, SourceIP: "1.2.3.4", Latency: 35 * time.Millisecond}
+		r := Result{Host: "h", Time: ts, Seq: i, Latency: 35 * time.Millisecond}
 		if i == 1 {
-			r.Err, r.SourceIP = errTimeout, ""
+			r.Err = errTimeout
 		}
 		if err := l.Log(r); err != nil {
 			t.Fatal(err)
@@ -76,7 +85,7 @@ func TestCTLogAppendsJSONLines(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "h.ctlog"))
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	want := []string{
-		`{"time":"2026-11-04T15:44:00+01:00","target":"h","source_ip":"1.2.3.4","icmp_seq":0,"latency_ms":35}`,
+		`{"time":"2026-11-04T15:44:00+01:00","target":"h","icmp_seq":0,"latency_ms":35}`,
 		`{"time":"2026-11-04T15:44:00+01:00","target":"h","icmp_seq":1,"error":"timeout after 4 seconds","cause":"no reply: packet loss, host down, or ICMP filtered by a firewall"}`,
 	}
 	if len(lines) != 2 || lines[0] != want[0] || lines[1] != want[1] {
@@ -102,8 +111,8 @@ func TestExecPingerLoopback(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	src, lat, err := p.Ping(context.Background(), 0)
-	if err != nil || src != "127.0.0.1" || lat < 0 {
-		t.Errorf("src=%q lat=%v err=%v", src, lat, err)
+	lat, err := p.Ping(context.Background(), 0)
+	if err != nil || lat < 0 {
+		t.Errorf("lat=%v err=%v", lat, err)
 	}
 }

@@ -3,10 +3,17 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
-const colWidth = 16 // bars per column, matching the spec's example layout
+const (
+	divider      = " │ "
+	minColWidth  = 4
+	defaultWidth = 80
+)
 
 var bars = []rune("▁▂▃▄▅▆▇█")
 
@@ -43,12 +50,14 @@ func cell(r Result) string {
 	return color + string(bars[idx]) + ansiReset
 }
 
-// display renders one column per host; bars wrap to a new row once a column fills up.
+// display renders one equal-width column per host across the full terminal width;
+// bars wrap to a new row once a column fills up.
 type display struct {
-	w       io.Writer
-	hosts   []string
-	cells   map[string][]string
-	printed int // lines written by the previous render
+	w         io.Writer
+	hosts     []string
+	cells     map[string][]string
+	printed   int        // lines written by the previous render
+	termWidth func() int // re-evaluated on every render so resizes are picked up
 }
 
 func newDisplay(w io.Writer, hosts []string) *display {
@@ -56,7 +65,25 @@ func newDisplay(w io.Writer, hosts []string) *display {
 	for _, h := range hosts {
 		d.cells[h] = nil
 	}
+	d.termWidth = func() int {
+		if f, ok := w.(*os.File); ok {
+			if cols, _, err := term.GetSize(int(f.Fd())); err == nil && cols > 0 {
+				return cols
+			}
+		}
+		return defaultWidth
+	}
 	return d
+}
+
+// colWidth splits the terminal width evenly between hosts, leaving room for dividers.
+func (d *display) colWidth() int {
+	n := len(d.hosts)
+	w := (d.termWidth() - (n-1)*len([]rune(divider))) / n
+	if w < minColWidth {
+		w = minColWidth
+	}
+	return w
 }
 
 func (d *display) Start() { fmt.Fprint(d.w, "\x1b[?25l"); d.render() }
@@ -76,6 +103,7 @@ func (d *display) render() {
 	for _, l := range lines {
 		sb.WriteString("\x1b[2K" + l + "\n")
 	}
+	sb.WriteString("\x1b[J") // drop stale rows if the layout shrank after a resize
 	d.printed = len(lines)
 	fmt.Fprint(d.w, sb.String())
 }
@@ -87,24 +115,25 @@ func (d *display) lines() []string {
 		}
 		return s
 	}
-	hdr, sep := "|", "|"
-	for _, h := range d.hosts {
-		name := h
+	colWidth := d.colWidth()
+	names := make([]string, len(d.hosts))
+	for i, h := range d.hosts {
+		name := []rune(h)
 		if len(name) > colWidth {
 			name = name[:colWidth]
 		}
-		hdr += " " + pad(name, colWidth-len(name)) + " |"
-		sep += strings.Repeat("-", colWidth+2) + "|"
+		names[i] = pad(string(name), colWidth-len(name))
 	}
+	hdr := strings.TrimRight(strings.Join(names, divider), " ")
 	rows := 1
 	for _, h := range d.hosts {
 		if n := (len(d.cells[h]) + colWidth - 1) / colWidth; n > rows {
 			rows = n
 		}
 	}
-	out := []string{hdr, sep}
+	out := []string{hdr}
 	for row := 0; row < rows; row++ {
-		line := "|"
+		segs := make([]string, 0, len(d.hosts))
 		for _, h := range d.hosts {
 			cs := d.cells[h]
 			lo, hi := row*colWidth, (row+1)*colWidth
@@ -115,9 +144,9 @@ func (d *display) lines() []string {
 				hi = len(cs)
 			}
 			seg := cs[lo:hi]
-			line += " " + pad(strings.Join(seg, ""), colWidth-len(seg)) + " |"
+			segs = append(segs, pad(strings.Join(seg, ""), colWidth-len(seg)))
 		}
-		out = append(out, line)
+		out = append(out, strings.TrimRight(strings.Join(segs, divider), " "))
 	}
 	return out
 }
