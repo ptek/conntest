@@ -52,12 +52,18 @@ func cell(r Result) string {
 
 // display renders one equal-width column per host across the full terminal width;
 // bars wrap to a new row once a column fills up.
+//
+// Rendering is incremental: once a row is full for every host it is final and is
+// never touched again, so the cursor only ever moves up over the still-filling
+// rows. This keeps the output correct after the terminal has scrolled.
 type display struct {
 	w         io.Writer
 	hosts     []string
 	cells     map[string][]string
-	printed   int        // lines written by the previous render
-	termWidth func() int // re-evaluated on every render so resizes are picked up
+	width     int // column width, fixed at Start so finished rows stay valid
+	final     int // rows that are complete and already printed
+	printed   int // mutable lines written by the previous render
+	termWidth func() int
 }
 
 func newDisplay(w io.Writer, hosts []string) *display {
@@ -86,8 +92,13 @@ func (d *display) colWidth() int {
 	return w
 }
 
-func (d *display) Start() { fmt.Fprint(d.w, "\x1b[?25l"); d.render() }
-func (d *display) Stop()  { fmt.Fprint(d.w, "\x1b[?25h") }
+func (d *display) Start() {
+	d.width = d.colWidth()
+	fmt.Fprint(d.w, "\x1b[?25l"+d.header()+"\n")
+	d.render()
+}
+
+func (d *display) Stop() { fmt.Fprint(d.w, "\x1b[?25h") }
 
 func (d *display) Add(r Result) {
 	d.cells[r.Host] = append(d.cells[r.Host], cell(r))
@@ -99,44 +110,61 @@ func (d *display) render() {
 	if d.printed > 0 {
 		fmt.Fprintf(&sb, "\x1b[%dA", d.printed)
 	}
-	lines := d.lines()
-	for _, l := range lines {
+	rows := d.rows()
+	for _, l := range rows[d.final:] {
 		sb.WriteString("\x1b[2K" + l + "\n")
 	}
-	sb.WriteString("\x1b[J") // drop stale rows if the layout shrank after a resize
-	d.printed = len(lines)
+	d.printed = len(rows) - d.final
+	d.final = d.completeRows()
+	if d.printed > len(rows)-d.final {
+		d.printed = len(rows) - d.final
+	}
 	fmt.Fprint(d.w, sb.String())
 }
 
-func (d *display) lines() []string {
-	pad := func(s string, n int) string {
-		if n > 0 {
-			return s + strings.Repeat(" ", n)
-		}
-		return s
+func pad(s string, n int) string {
+	if n > 0 {
+		return s + strings.Repeat(" ", n)
 	}
-	colWidth := d.colWidth()
+	return s
+}
+
+func (d *display) header() string {
 	names := make([]string, len(d.hosts))
 	for i, h := range d.hosts {
 		name := []rune(h)
-		if len(name) > colWidth {
-			name = name[:colWidth]
+		if len(name) > d.width {
+			name = name[:d.width]
 		}
-		names[i] = pad(string(name), colWidth-len(name))
+		names[i] = pad(string(name), d.width-len(name))
 	}
-	hdr := strings.TrimRight(strings.Join(names, divider), " ")
+	return strings.TrimRight(strings.Join(names, divider), " ")
+}
+
+// completeRows is the number of leading rows that are full for every host.
+func (d *display) completeRows() int {
+	n := -1
+	for _, h := range d.hosts {
+		if c := len(d.cells[h]) / d.width; n < 0 || c < n {
+			n = c
+		}
+	}
+	return n
+}
+
+func (d *display) rows() []string {
 	rows := 1
 	for _, h := range d.hosts {
-		if n := (len(d.cells[h]) + colWidth - 1) / colWidth; n > rows {
+		if n := (len(d.cells[h]) + d.width - 1) / d.width; n > rows {
 			rows = n
 		}
 	}
-	out := []string{hdr}
+	var out []string
 	for row := 0; row < rows; row++ {
 		segs := make([]string, 0, len(d.hosts))
 		for _, h := range d.hosts {
 			cs := d.cells[h]
-			lo, hi := row*colWidth, (row+1)*colWidth
+			lo, hi := row*d.width, (row+1)*d.width
 			if lo > len(cs) {
 				lo = len(cs)
 			}
@@ -144,7 +172,7 @@ func (d *display) lines() []string {
 				hi = len(cs)
 			}
 			seg := cs[lo:hi]
-			segs = append(segs, pad(strings.Join(seg, ""), colWidth-len(seg)))
+			segs = append(segs, pad(strings.Join(seg, ""), d.width-len(seg)))
 		}
 		out = append(out, strings.TrimRight(strings.Join(segs, divider), " "))
 	}

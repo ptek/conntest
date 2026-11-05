@@ -37,15 +37,15 @@ func TestCellBuckets(t *testing.T) {
 func TestDisplayWraps(t *testing.T) {
 	d := newDisplay(&strings.Builder{}, []string{"a", "b"})
 	d.termWidth = func() int { return 23 } // (23 - 3) / 2 = 10 per column
-	colWidth := d.colWidth()
-	if colWidth != 10 {
-		t.Fatalf("colWidth = %d", colWidth)
+	d.width = d.colWidth()
+	if d.width != 10 {
+		t.Fatalf("colWidth = %d", d.width)
 	}
-	for i := 0; i < colWidth+1; i++ {
+	for i := 0; i < d.width+1; i++ {
 		d.cells["a"] = append(d.cells["a"], "x")
 	}
 	d.cells["b"] = []string{"y"}
-	lines := d.lines()
+	lines := append([]string{d.header()}, d.rows()...)
 	want := []string{
 		"a          │ b",
 		strings.Repeat("x", 10) + " │ y",
@@ -58,6 +58,31 @@ func TestDisplayWraps(t *testing.T) {
 		if lines[i] != want[i] {
 			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
 		}
+	}
+}
+
+// Once a row is full for every host it must never be redrawn, so the cursor
+// never has to travel up past the top of the screen.
+func TestDisplayDoesNotRedrawCompleteRows(t *testing.T) {
+	var out strings.Builder
+	d := newDisplay(&out, []string{"a", "b"})
+	d.termWidth = func() int { return 11 } // (11 - 3) / 2 = 4 cells per column
+	d.Start()
+	for i := 0; i < 8; i++ {
+		d.Add(Result{Host: "a"})
+		d.Add(Result{Host: "b"})
+	}
+	// Row 0 was complete after 4 results each; subsequent renders may only move up
+	// over the single still-filling row.
+	if strings.Contains(out.String(), "\x1b[2A") {
+		t.Errorf("cursor moved up over a completed row:\n%q", out.String())
+	}
+	if d.final != 2 || d.printed != 0 {
+		t.Errorf("final=%d printed=%d, want 2 and 0", d.final, d.printed)
+	}
+	d.Add(Result{Host: "a"})
+	if d.final != 2 || d.printed != 1 {
+		t.Errorf("after partial row: final=%d printed=%d, want 2 and 1", d.final, d.printed)
 	}
 }
 
